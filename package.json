@@ -1,0 +1,29 @@
+{
+  "name": "shopify-b2b-sync",
+  "version": "1.0.0",
+  "description": "Automate the creation and linking of companies and customers in Shopify based on data from Google Sheets",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "shopify",
+    "b2b",
+    "google-sheets",
+    "sync",
+    "automation"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "axios": "^1.6.0",
+    "googleapis": "^128.0.0",
+    "graphql": "^16.8.1"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+} 
