@@ -4,14 +4,22 @@
  * This service orchestrates the synchronization process between Google Sheets and Shopify.
  * Enhanced flow: Company → Customer → Location → Assignment
  * 
- * New Flow:
- * 1. Find/Create Company (using Company ID)
+ * Sync Flow:
+ * 1. Find/Create Company (using Company ID) + Sync Metadata
  * 2. Find/Create Customer (using email)
  * 3. Link Customer to Company (as company contact)
- * 4. Find/Create Location (using Location ID, linked to company)
+ * 4. Find/Create Location (using Location ID, linked to company) + Sync Metadata
  * 5. Assign Customer to Location
  * 
- * This allows companies to have multiple locations with customers assigned to specific locations.
+ * Metadata Synchronization:
+ * - Syncs custom fields from Google Sheets columns L, M, N, O to Shopify metafields
+ * - Applies metadata to both company and location levels
+ * - Updates existing records when Google Sheets data changes
+ * - Company metafields: custom.price_level, custom.payment_terms, custom.currency_code, custom.sales_rep
+ * - Location metafields: custom.location_price_level, custom.location_payment_terms, custom.location_currency_code, custom.location_sales_rep
+ * 
+ * This allows companies to have multiple locations with customers assigned to specific locations,
+ * while maintaining business metadata consistency across both company and location records.
  */
 
 const SheetsService = require('./sheetsService');
@@ -202,6 +210,11 @@ class SyncService {
       this.stats.companiesFound++;
     }
 
+    // Debug: List all locations for this company (only on first row to avoid spam)
+    if (rowData.locationId === '1') {
+      await this.shopifyService.debugListAllLocations(company.id);
+    }
+
     // Step 2: Get or create customer and link to company
     console.log('👤 Step 2: Processing customer...');
     const { customer, contact } = await this.shopifyService.getOrCreateCustomerAndContact(company.id, rowData);
@@ -274,15 +287,15 @@ class SyncService {
     }
 
     // Display business information preview
-    console.log('\n💼 Business Information Preview:');
+    console.log('\n💼 Business Information Preview (Metadata Fields):');
     const businessPreview = data.slice(0, 2);
     businessPreview.forEach((row, index) => {
       console.log(`\nRow ${index + 1}:`);
       console.log(`  📍 Address: ${row.address}, ${row.city}, ${row.state} ${row.zip}`);
-      console.log(`  💰 Price Level: ${row.priceLevel || 'N/A'}`);
-      console.log(`  📋 Terms: ${row.terms || 'N/A'}`);
-      console.log(`  💱 Currency: ${row.currencyCode || 'N/A'}`);
-      console.log(`  👨‍💼 Sales Rep: ${row.salesRep || 'N/A'}`);
+      console.log(`  💰 Price Level: ${row.priceLevel || 'N/A'} → custom.price_level`);
+      console.log(`  📋 Payment Terms: ${row.terms || 'N/A'} → custom.payment_terms`);
+      console.log(`  💱 Currency Code: ${row.currencyCode || 'N/A'} → custom.currency_code`);
+      console.log(`  👨‍💼 Sales Rep: ${row.salesRep || 'N/A'} → custom.sales_rep`);
       console.log(`  🧾 Tax Details: ${row.taxDetails || 'N/A'}`);
     });
   }
