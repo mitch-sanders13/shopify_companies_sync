@@ -295,6 +295,69 @@ class ShopifyService {
   }
 
   /**
+   * Update tax settings for a company location using native Shopify tax fields
+   * @param {string} locationId - The Shopify location ID
+   * @param {Object} locationData - Location data containing tax information
+   * @returns {Promise<void>}
+   */
+  async updateLocationTaxSettings(locationId, locationData) {
+    // Only proceed if we have tax details
+    if (!locationData.taxDetails || locationData.taxDetails.trim() === '') {
+      console.log('ℹ️  No tax details provided, skipping tax settings update');
+      return;
+    }
+
+    const mutation = `
+      mutation companyLocationTaxSettingsUpdate(
+        $companyLocationId: ID!,
+        $taxRegistrationId: String
+      ) {
+        companyLocationTaxSettingsUpdate(
+          companyLocationId: $companyLocationId,
+          taxRegistrationId: $taxRegistrationId
+        ) {
+          companyLocation {
+            id
+            name
+            taxSettings {
+              taxRegistrationId
+              taxExempt
+            }
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `;
+
+    try {
+      console.log(`🏛️  Updating tax settings for location with tax ID: ${locationData.taxDetails.trim()}`);
+      
+      const data = await this.executeQuery(mutation, {
+        companyLocationId: locationId,
+        taxRegistrationId: locationData.taxDetails.trim()
+      });
+      
+      if (data.companyLocationTaxSettingsUpdate.userErrors?.length > 0) {
+        console.error('❌ Tax settings update errors:', data.companyLocationTaxSettingsUpdate.userErrors);
+        throw new Error(`Tax settings update errors: ${JSON.stringify(data.companyLocationTaxSettingsUpdate.userErrors)}`);
+      }
+
+      console.log('✅ Tax settings updated successfully');
+      const taxSettings = data.companyLocationTaxSettingsUpdate.companyLocation.taxSettings;
+      console.log(`   - Tax Registration ID: ${taxSettings.taxRegistrationId}`);
+      console.log(`   - Tax Exempt: ${taxSettings.taxExempt}`);
+      
+    } catch (error) {
+      console.error('❌ Error updating tax settings:', error);
+      // Don't throw error to prevent sync from failing - just log it
+      console.warn('⚠️  Continuing sync despite tax settings error');
+    }
+  }
+
+  /**
    * Set metafields for a location using the metafieldsSet mutation
    * @param {string} locationId - The Shopify location ID
    * @param {Object} locationData - Location data from spreadsheet
@@ -594,11 +657,13 @@ class ShopifyService {
                 name
                 externalId
                 shippingAddress {
+                  recipient
                   address1
+                  address2
                   city
                   province
                   zip
-                  country
+                  countryCode
                 }
                 createdAt
                 updatedAt
@@ -641,11 +706,13 @@ class ShopifyService {
                 name
                 externalId
                 shippingAddress {
+                  recipient
                   address1
+                  address2
                   city
                   province
                   zip
-                  country
+                  countryCode
                 }
                 createdAt
                 updatedAt
@@ -683,22 +750,80 @@ class ShopifyService {
    * @returns {Promise<Object>} Updated location object
    */
   async updateCompanyLocation(locationId, locationData) {
-    const mutation = `
-      mutation companyLocationUpdate($companyLocationId: ID!, $input: CompanyLocationUpdateInput!) {
-        companyLocationUpdate(companyLocationId: $companyLocationId, input: $input) {
-          companyLocation {
-            id
-            name
-            externalId
-            shippingAddress {
-              address1
-              city
-              province
-              zip
-              country
+    try {
+      console.log(`📍 Updating location: ${locationData.companyName} - ${locationData.address} (ID: ${locationData.locationId})`);
+      
+      // Step 1: Update basic location information (excluding address)
+      const updateMutation = `
+        mutation companyLocationUpdate($companyLocationId: ID!, $input: CompanyLocationUpdateInput!) {
+          companyLocationUpdate(companyLocationId: $companyLocationId, input: $input) {
+            companyLocation {
+              id
+              name
+              externalId
+              createdAt
+              updatedAt
             }
-            createdAt
-            updatedAt
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+      `;
+
+      const updateInput = {
+        name: `${locationData.companyName} - ${locationData.address}`,
+        externalId: locationData.locationId,
+        note: `Updated via sync from Google Sheets\nLocation ID: ${locationData.locationId}\nAddress: ${locationData.address}, ${locationData.city}, ${locationData.state} ${locationData.zip}\nSync Date: ${new Date().toISOString()}`
+      };
+
+      const updateData = await this.executeQuery(updateMutation, { 
+        companyLocationId: locationId, 
+        input: updateInput 
+      });
+      
+      if (updateData.companyLocationUpdate.userErrors?.length > 0) {
+        throw new Error(`Location update errors: ${JSON.stringify(updateData.companyLocationUpdate.userErrors)}`);
+      }
+
+      console.log('✅ Location basic info updated successfully');
+
+      // Step 2: Update address information using companyLocationAssignAddress
+      await this.updateCompanyLocationAddress(locationId, locationData);
+
+      // Step 3: Update metadata fields
+      await this.setLocationMetafields(locationId, locationData);
+      console.log('✅ Location metadata updated successfully');
+
+      // Step 4: Update tax settings using native Shopify tax fields
+      await this.updateLocationTaxSettings(locationId, locationData);
+
+      return updateData.companyLocationUpdate.companyLocation;
+    } catch (error) {
+      console.error('❌ Error updating location:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update address information for a company location using companyLocationAssignAddress
+   * @param {string} locationId - The Shopify location ID to update
+   * @param {Object} locationData - Location information from spreadsheet
+   * @returns {Promise<Object>} Updated address information
+   */
+  async updateCompanyLocationAddress(locationId, locationData) {
+    const mutation = `
+      mutation companyLocationAssignAddress($locationId: ID!, $address: CompanyAddressInput!, $addressTypes: [CompanyAddressType!]!) {
+        companyLocationAssignAddress(locationId: $locationId, address: $address, addressTypes: $addressTypes) {
+          addresses {
+            recipient
+            address1
+            address2
+            city
+            zip
+            zoneCode
+            countryCode
           }
           userErrors {
             field
@@ -708,31 +833,36 @@ class ShopifyService {
       }
     `;
 
-    const input = {
-      name: `${locationData.companyName} - ${locationData.address}`,
-      externalId: locationData.locationId,
-      note: `Updated via sync from Google Sheets\nLocation ID: ${locationData.locationId}\nAddress: ${locationData.address}, ${locationData.city}, ${locationData.state} ${locationData.zip}\nSync Date: ${new Date().toISOString()}`
+    const addressInput = {
+      recipient: locationData.attention || `${locationData.firstName} ${locationData.lastName}`.trim() || '',
+      address1: locationData.address,
+      address2: locationData.address2 || '',
+      city: locationData.city,
+      zoneCode: locationData.state,
+      zip: locationData.zip,
+      countryCode: locationData.country || 'US'
     };
 
     try {
-      console.log(`📍 Updating location: ${input.name} (ID: ${locationData.locationId})`);
+      console.log(`📍 Updating location address for: ${locationData.companyName} - ${locationData.address}`);
       
-      const data = await this.executeQuery(mutation, { companyLocationId: locationId, input });
+      // Update both shipping and billing addresses
+      const addressTypes = ['SHIPPING', 'BILLING'];
       
-      if (data.companyLocationUpdate.userErrors?.length > 0) {
-        throw new Error(`Location update errors: ${JSON.stringify(data.companyLocationUpdate.userErrors)}`);
+      const data = await this.executeQuery(mutation, { 
+        locationId, 
+        address: addressInput, 
+        addressTypes 
+      });
+      
+      if (data.companyLocationAssignAddress.userErrors?.length > 0) {
+        throw new Error(`Location address update errors: ${JSON.stringify(data.companyLocationAssignAddress.userErrors)}`);
       }
 
-      const location = data.companyLocationUpdate.companyLocation;
-      console.log('✅ Location updated successfully');
-
-      // Update metadata fields
-      await this.setLocationMetafields(location.id, locationData);
-      console.log('✅ Location metadata updated successfully');
-
-      return location;
+      console.log('✅ Location address updated successfully');
+      return data.companyLocationAssignAddress.addresses;
     } catch (error) {
-      console.error('❌ Error updating location:', error);
+      console.error('❌ Error updating location address:', error);
       throw error;
     }
   }
@@ -752,11 +882,13 @@ class ShopifyService {
             name
             externalId
             shippingAddress {
+              recipient
               address1
+              address2
               city
               province
               zip
-              country
+              countryCode
             }
             createdAt
             updatedAt
@@ -774,11 +906,13 @@ class ShopifyService {
       externalId: locationData.locationId,
       note: `Created via sync from Google Sheets\nLocation ID: ${locationData.locationId}\nSync Date: ${new Date().toISOString()}`,
       shippingAddress: {
+        recipient: locationData.attention || '',
         address1: locationData.address,
+        address2: locationData.address2 || '',
         city: locationData.city,
         zoneCode: locationData.state,
         zip: locationData.zip,
-        countryCode: 'US' // Default to US, can be made configurable
+        countryCode: locationData.country || 'US'
       },
       billingSameAsShipping: true
     };
@@ -798,6 +932,9 @@ class ShopifyService {
       // Add metadata fields after creation
       await this.setLocationMetafields(location.id, locationData);
       console.log('✅ Location metadata added successfully');
+
+      // Update tax settings using native Shopify tax fields
+      await this.updateLocationTaxSettings(location.id, locationData);
 
       return location;
     } catch (error) {
@@ -1200,10 +1337,13 @@ class ShopifyService {
                 createdAt
                 updatedAt
                 shippingAddress {
+                  recipient
                   address1
+                  address2
                   city
                   province
                   zip
+                  countryCode
                 }
               }
             }
@@ -1225,7 +1365,10 @@ class ShopifyService {
           console.log(`   ${index + 1}. ${location.name}`);
           console.log(`      - Shopify ID: ${location.id}`);
           console.log(`      - External ID: ${location.externalId}`);
+          console.log(`      - Attention: ${location.shippingAddress?.recipient || 'N/A'}`);
           console.log(`      - Address: ${location.shippingAddress?.address1}, ${location.shippingAddress?.city}`);
+          console.log(`      - Address 2: ${location.shippingAddress?.address2 || 'N/A'}`);
+          console.log(`      - Country: ${location.shippingAddress?.countryCode || 'N/A'}`);
           console.log(`      - Created: ${location.createdAt}`);
           console.log(`      - Updated: ${location.updatedAt}`);
         });
@@ -1253,6 +1396,7 @@ class ShopifyService {
       metafields.push({
         namespace: 'custom',
         key: 'price_level',
+        type: 'list.single_line_text_field',
         value: JSON.stringify([companyData.priceLevel.trim()])
       });
     }
@@ -1263,6 +1407,7 @@ class ShopifyService {
       metafields.push({
         namespace: 'custom',
         key: 'payment_terms',
+        type: 'list.single_line_text_field',
         value: JSON.stringify([companyData.terms.trim()])
       });
     }
@@ -1272,6 +1417,7 @@ class ShopifyService {
       metafields.push({
         namespace: 'custom',
         key: 'currency_code',
+        type: 'list.single_line_text_field',
         value: JSON.stringify([companyData.currencyCode.trim()])
       });
     }
@@ -1281,7 +1427,54 @@ class ShopifyService {
       metafields.push({
         namespace: 'custom',
         key: 'sales_rep',
+        type: 'list.single_line_text_field',
         value: JSON.stringify([companyData.salesRep.trim()])
+      });
+    }
+    
+    // CC Hold metafield - boolean flag for credit control
+    metafields.push({
+      namespace: 'custom',
+      key: 'cc_hold',
+      type: 'boolean',
+      value: companyData.ccHold ? 'true' : 'false'
+    });
+    
+    // AR Red Flag metafield - boolean flag for accounts receivable issues
+    metafields.push({
+      namespace: 'custom',
+      key: 'ar_red_flag',
+      type: 'boolean',
+      value: companyData.arRedFlag ? 'true' : 'false'
+    });
+    
+    // Primary Contact Email metafield - single line text for primary contact
+    if (companyData.emailPrimaryContact && companyData.emailPrimaryContact.trim() !== '') {
+      metafields.push({
+        namespace: 'custom',
+        key: 'email_of_primary_contact',
+        type: 'single_line_text_field',
+        value: companyData.emailPrimaryContact.trim()
+      });
+    }
+    
+    // Billing Contact Email metafield - single line text for billing contact
+    if (companyData.emailBillingContact && companyData.emailBillingContact.trim() !== '') {
+      metafields.push({
+        namespace: 'custom',
+        key: 'email_of_billing_contact',
+        type: 'single_line_text_field',
+        value: companyData.emailBillingContact.trim()
+      });
+    }
+    
+    // Billing Contact Email 2 metafield - single line text for secondary billing contact
+    if (companyData.emailBillingContact2 && companyData.emailBillingContact2.trim() !== '') {
+      metafields.push({
+        namespace: 'custom',
+        key: 'email_of_billing_contact_2',
+        type: 'single_line_text_field',
+        value: companyData.emailBillingContact2.trim()
       });
     }
     
@@ -1335,6 +1528,9 @@ class ShopifyService {
         value: JSON.stringify([locationData.salesRep.trim()])
       });
     }
+    
+    // Note: Tax details are now handled via native tax settings
+    // using companyLocationTaxSettingsUpdate mutation instead of custom metafields
     
     return metafields;
   }

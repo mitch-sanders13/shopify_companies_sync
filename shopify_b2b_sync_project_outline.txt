@@ -1,1 +1,100 @@
-Shopify B2B Sync Integration (Google Sheets -> Shopify) Tech Stack: Node.js, Shopify GraphQL Admin API, Google Sheets API (Goal) Objective Automate the creation and linking of companies and customers in Shopify based on data stored in a Google Sheet. (Features) Key Features -Read structured company + customer data from a Google Sheet -Create companies using Shopify's B2B GraphQL API -Create customers and link them to companies as contacts -Avoid duplicates via basic matching logic (by name or email) (Structure) Project Structure shopify-b2b-sync/ .env # Environment variables index.js # Main entry point services/ sheetsService.js # Reads from Google Sheets shopifyService.js # Shopify GraphQL API calls syncService.js # Orchestrates sync logic utils/ gqlHelper.js # (Optional) GraphQL builders package.json README.md (Auth) Environment Variables (.env) SHOPIFY_STORE_DOMAIN=your-store.myshopify.com SHOPIFY_ADMIN_TOKEN=shpat_abc123 SHOPIFY_API_VERSION=2024-04 GOOGLE_SHEET_ID=your_google_sheet_id GOOGLE_SERVICE_ACCOUNT_CREDENTIALS=./credentials.json (Dependencies) Dependencies npm install dotenv axios googleapis graphql (Modules) Core Modules -sheetsService.js -Authenticates with Google Sheets using a service account -Reads data from a spreadsheet and returns structured JSON: [ { companyName: 'Acme Inc', address: { ... }, customer: { email: 'john@example.com', firstName: 'John', lastName: 'Doe', role: 'ADMIN' } }, ... ] -shopifyService.js -Uses Shopify Admin GraphQL API to: -Create companies -Create customers -Link customers to companies (via companyContactCreate mutation) -Uses axios to post GraphQL requests -syncService.js -Loops through all sheet rows: -Creates company if not already created -Creates customer if not already created -Links customer to company -Logs status/errors (Entrypoint) Entrypoint (index.js) require('dotenv').config(); const { syncCompaniesAndCustomers } = require('./services/syncService'); (async () => { await syncCompaniesAndCustomers(); })(); (Enhancements) Optional Enhancements -Add deduplication (check for existing company/customer before creation) -Add error logging and reporting -Trigger syncs via webhook or schedule -Retry failed API calls (Notes) Notes -This integration requires Shopify Plus for B2B company support. -All company-related GraphQL mutations are available only in the Shopify Admin GraphQL API (not REST). 
+Shopify B2B Sync Integration (Google Sheets -> Shopify) 
+
+"Tech Stack: Node.js, Shopify GraphQL Admin API, Google Sheets API "
+
+(Goal) Objective 
+Automate the creation and linking of companies and customers in Shopify based on data stored in a Google 
+Sheet. 
+
+(Features) Key Features 
+
+#NAME?
+-Create companies using Shopify's B2B GraphQL API 
+#NAME?
+#NAME?
+(Structure) Project Structure 
+shopify-b2b-sync/ 
+
+.env # Environment variables 
+index.js # Main entry point 
+services/
+
+ sheetsService.js # Reads from Google Sheets
+
+ shopifyService.js # Shopify GraphQL API calls
+
+ syncService.js # Orchestrates sync logic
+
+ utils/ 
+gqlHelper.js # (Optional) GraphQL builders
+
+ package.json
+
+ README.md 
+
+(Auth) Environment Variables (.env) 
+SHOPIFY_STORE_DOMAIN=your-store.myshopify.com 
+
+
+SHOPIFY_ADMIN_TOKEN=shpat_abc123 
+SHOPIFY_API_VERSION=2024-04 
+GOOGLE_SHEET_ID=your_google_sheet_id 
+GOOGLE_SERVICE_ACCOUNT_CREDENTIALS=./credentials.json 
+
+(Dependencies) Dependencies 
+npm install dotenv axios googleapis graphql 
+
+(Modules) Core Modules 
+
+#NAME?
+#NAME?
+-Reads data from a spreadsheet and returns structured JSON: 
+[ 
+{ 
+"companyName: 'Acme Inc', "
+"address: { ... }, "
+customer: {
+
+" email: 'john@example.com', "
+"firstName: 'John', "
+"lastName: 'Doe', "
+role: 'ADMIN'
+
+ } 
+"}, "
+... 
+
+] 
+
+#NAME?
+-Uses Shopify Admin GraphQL API to: 
+#NAME?
+#NAME?
+#NAME?
+#NAME?
+
+#NAME?
+-Loops through all sheet rows: 
+#NAME?
+#NAME?
+#NAME?
+#NAME?
+(Entrypoint) Entrypoint (index.js) 
+require('dotenv').config(); 
+const { syncCompaniesAndCustomers } = require('./services/syncService'); 
+
+(async () => { 
+await syncCompaniesAndCustomers(); 
+})(); 
+
+(Enhancements) Optional Enhancements 
+
+-Add deduplication (check for existing company/customer before creation) 
+#NAME?
+#NAME?
+#NAME?
+(Notes) Notes 
+
+#NAME?
+-All company-related GraphQL mutations are available only in the Shopify Admin GraphQL API (not REST). 
+

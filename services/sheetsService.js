@@ -4,10 +4,11 @@
  * This service handles authentication with Google Sheets API using a service account
  * and reads structured company and customer data from a specified spreadsheet.
  * 
- * Expected Sheet Structure (16 columns):
- * A: Company ID | B: Company Name | C: Location ID | D: Address | E: City | F: State | G: Zip |
- * H: Customer Email | I: Customer First Name | J: Customer Last Name | K: Customer Role |
- * L: Price Level | M: Terms | N: Currency Code | O: Sales Rep | P: Tax Details
+ * Expected Sheet Structure (24 columns):
+ * A: Company ID | B: Company Name | C: Location ID | D: Attention | E: Address | F: Address 2 | G: City | 
+ * H: State | I: Zip | J: Country | K: Customer Email | L: Customer First Name | M: Customer Last Name | 
+ * N: Customer Role | O: Price Level | P: Terms | Q: Currency Code | R: Sales Rep | S: Tax Details |
+ * T: CC Hold | U: AR Red Flag | V: Email of Primary Contact | W: Email of Billing Contact | X: Email of Billing Contact 2
  */
 
 const { google } = require('googleapis');
@@ -69,10 +70,10 @@ class SheetsService {
 
       console.log(`📊 Reading data from Google Sheet: ${spreadsheetId}`);
 
-      // Read all data from the sheet - expanded to include all 16 columns (A-P)
+      // Read all data from the sheet - expanded to include all 24 columns (A-X)
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId,
-        range: `${sheetName}!A2:P`,
+        range: `${sheetName}!A2:X`,
       });
 
       const rows = response.data.values || [];
@@ -90,9 +91,9 @@ class SheetsService {
         console.log(`Row ${index + 1}:`, row);
         console.log(`  Length: ${row.length} columns`);
         console.log(`  Company Name (B): "${row[1] || 'EMPTY'}"`);
-        console.log(`  Customer Email (H): "${row[7] || 'EMPTY'}"`);
-        console.log(`  Customer First Name (I): "${row[8] || 'EMPTY'}"`);
-        console.log(`  Customer Last Name (J): "${row[9] || 'EMPTY'}"`);
+        console.log(`  Customer Email (K): "${row[10] || 'EMPTY'}"`);
+        console.log(`  Customer First Name (L): "${row[11] || 'EMPTY'}"`);
+        console.log(`  Customer Last Name (M): "${row[12] || 'EMPTY'}"`);
       });
       console.log('');
 
@@ -129,24 +130,32 @@ class SheetsService {
           return;
         }
 
-        // Map all 16 columns to variables
+        // Map all 24 columns to variables
         const [
           companyId,           // A
           companyName,         // B  
           locationId,          // C
-          address,             // D
-          city,                // E
-          state,               // F
-          zip,                 // G
-          customerEmail,       // H
-          customerFirstName,   // I
-          customerLastName,    // J
-          customerRole,        // K
-          priceLevel,          // L
-          terms,               // M
-          currencyCode,        // N
-          salesRep,            // O
-          taxDetails           // P
+          attention,           // D
+          address,             // E
+          address2,            // F
+          city,                // G
+          state,               // H
+          zip,                 // I
+          country,             // J
+          customerEmail,       // K
+          customerFirstName,   // L
+          customerLastName,    // M
+          customerRole,        // N
+          priceLevel,          // O
+          terms,               // P
+          currencyCode,        // Q
+          salesRep,            // R
+          taxDetails,          // S
+          ccHold,              // T
+          arRedFlag,           // U
+          emailPrimaryContact, // V
+          emailBillingContact, // W
+          emailBillingContact2 // X
         ] = row;
 
         // Enhanced validation for required fields
@@ -162,9 +171,9 @@ class SheetsService {
         if (!trimmedCompanyId) missingFields.push('Company ID (Column A)');
         if (!trimmedCompanyName) missingFields.push('Company Name (Column B)');
         if (!trimmedLocationId) missingFields.push('Location ID (Column C)');
-        if (!trimmedCustomerEmail) missingFields.push('Customer Email (Column H)');
-        if (!trimmedCustomerFirstName) missingFields.push('Customer First Name (Column I)');
-        if (!trimmedCustomerLastName) missingFields.push('Customer Last Name (Column J)');
+        if (!trimmedCustomerEmail) missingFields.push('Customer Email (Column K)');
+        if (!trimmedCustomerFirstName) missingFields.push('Customer First Name (Column L)');
+        if (!trimmedCustomerLastName) missingFields.push('Customer Last Name (Column M)');
 
         if (missingFields.length > 0) {
           const errorMsg = `Row ${rowNumber}: Missing required fields: ${missingFields.join(', ')}`;
@@ -223,11 +232,13 @@ class SheetsService {
           locationId: trimmedLocationId,
           
           // Address information (flattened)
+          attention: attention?.trim() || '',
           address: address?.trim() || '',
+          address2: address2?.trim() || '',
           city: city?.trim() || '',
           state: state?.trim() || '',
           zip: zip?.trim() || '',
-          country: 'US', // Default to US, can be made configurable
+          country: country?.trim() || 'United States', // Default to US, can be made configurable
           
           // Customer information (flattened)
           customerEmail: trimmedCustomerEmail.toLowerCase(),
@@ -241,6 +252,13 @@ class SheetsService {
           currencyCode: currencyCode?.trim().toUpperCase() || 'USD', // Default to USD
           salesRep: salesRep?.trim() || '',
           taxDetails: taxDetails?.trim() || '',
+          
+          // Company metafields (boolean and email)
+          ccHold: ccHold?.trim().toLowerCase() === 'true' || false,
+          arRedFlag: arRedFlag?.trim().toLowerCase() === 'true' || false,
+          emailPrimaryContact: emailPrimaryContact?.trim() || '',
+          emailBillingContact: emailBillingContact?.trim() || '',
+          emailBillingContact2: emailBillingContact2?.trim() || '',
           
           // Metadata for tracking
           _sourceRow: rowNumber,
