@@ -1115,64 +1115,26 @@ class ShopifyService {
     // First try to find existing location by external ID
     let location = await this.findLocationByExternalId(companyId, data.locationId);
     
-    if (!location) {
-      // Check if there's a default location we can update instead of creating a new one
+    if (location) {
+      // Found existing location, update it
+      console.log(`📍 Found existing location: ${location.name} (ID: ${location.externalId})`);
+      console.log(`🔄 Updating location metadata for latest changes...`);
+      location = await this.updateCompanyLocation(location.id, data);
+    } else {
+      // No existing location found, check for default location to update
       const defaultLocation = await this.findDefaultCompanyLocation(companyId);
       
-      // Update the default location if:
-      // 1. A default location exists (no external ID)
-      // 2. AND we don't already have any other locations with external IDs
-      // 3. AND this looks like it should be the primary location
       if (defaultLocation) {
-        // Check if there are any other locations with external IDs already
-        const existingLocationsQuery = `
-          query checkExistingLocations($companyId: ID!) {
-            company(id: $companyId) {
-              locations(first: 10) {
-                edges {
-                  node {
-                    id
-                    externalId
-                  }
-                }
-              }
-            }
-          }
-        `;
-        
-        try {
-          const existingData = await this.executeQuery(existingLocationsQuery, { companyId });
-          const locationsWithExternalIds = existingData.company?.locations.edges.filter(
-            edge => edge.node.externalId && edge.node.externalId.trim() !== ''
-          ) || [];
-          
-          // If no locations have external IDs yet, update the default location
-          // This handles the case where Shopify auto-creates a blank default location
-          if (locationsWithExternalIds.length === 0) {
-            console.log(`📍 Found default company location with no external ID, updating it with location data...`);
-            console.log(`   - Default Location ID: ${defaultLocation.id}`);
-            console.log(`   - Will set External ID to: ${data.locationId}`);
-            location = await this.updateCompanyLocation(defaultLocation.id, data);
-          } else {
-            // Create new location if default location is already used/updated
-            console.log(`📍 Default location already has external ID or other locations exist, creating new location...`);
-            location = await this.createCompanyLocation(companyId, data);
-          }
-        } catch (error) {
-          console.error('❌ Error checking existing locations, creating new location instead:', error);
-          location = await this.createCompanyLocation(companyId, data);
-        }
+        // Update the default location with our data
+        console.log(`📍 Found default company location with no external ID, updating it with location data...`);
+        console.log(`   - Default Location ID: ${defaultLocation.id}`);
+        console.log(`   - Will set External ID to: ${data.locationId}`);
+        location = await this.updateCompanyLocation(defaultLocation.id, data);
       } else {
-        // No default location found, create new location
+        // No default location, create new one
         console.log(`📍 No default location found, creating new location...`);
         location = await this.createCompanyLocation(companyId, data);
       }
-    } else {
-      console.log(`📍 Found existing location: ${location.name} (ID: ${location.externalId})`);
-      
-      // Update metadata for existing locations to ensure latest data
-      console.log(`🔄 Updating location metadata for latest changes...`);
-      location = await this.updateCompanyLocation(location.id, data);
     }
     
     return location;

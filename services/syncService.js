@@ -206,13 +206,10 @@ class SyncService {
     
     if (company.createdAt === company.updatedAt) {
       this.stats.companiesCreated++;
+      // Debug: List all locations for this company (only when we first encounter each company)
+      await this.shopifyService.debugListAllLocations(company.id);
     } else {
       this.stats.companiesFound++;
-    }
-
-    // Debug: List all locations for this company (only on first row to avoid spam)
-    if (rowData.locationId === '1') {
-      await this.shopifyService.debugListAllLocations(company.id);
     }
 
     // Step 2: Get or create customer and link to company
