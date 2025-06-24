@@ -1239,6 +1239,9 @@ class ShopifyService {
 
   /**
    * Build metafields array for company metadata
+   * NOTE: Companies do not have native payment terms fields in Shopify.
+   * Payment terms are applied to individual orders, not companies directly.
+   * This metafield stores the payment terms to be used when creating orders for this company.
    * @param {Object} companyData - Company data from spreadsheet
    * @returns {Array} Array of metafield objects
    */
@@ -1255,6 +1258,7 @@ class ShopifyService {
     }
     
     // Payment Terms metafield - format as JSON array for list type
+    // This will be used when creating orders for this company
     if (companyData.terms && companyData.terms.trim() !== '') {
       metafields.push({
         namespace: 'custom',
@@ -1268,7 +1272,7 @@ class ShopifyService {
       metafields.push({
         namespace: 'custom',
         key: 'currency_code',
-        value: JSON.stringify([companyData.currencyCode.trim().toUpperCase()])
+        value: JSON.stringify([companyData.currencyCode.trim()])
       });
     }
     
@@ -1286,13 +1290,16 @@ class ShopifyService {
 
   /**
    * Build metafields array for location metadata
+   * NOTE: Company locations do not have native payment terms fields in Shopify.
+   * Payment terms are applied to individual orders, not locations directly.
+   * These metafields store the payment terms to be used when creating orders for this location.
    * @param {Object} locationData - Location data from spreadsheet
    * @returns {Array} Array of metafield objects
    */
   buildLocationMetafields(locationData) {
     const metafields = [];
     
-    // Price Level metafield - single choice value (choice field)
+    // Price Level metafield - single choice value (for choice/dropdown field)
     if (locationData.priceLevel && locationData.priceLevel.trim() !== '') {
       metafields.push({
         namespace: 'custom',
@@ -1301,7 +1308,8 @@ class ShopifyService {
       });
     }
     
-    // Payment Terms metafield - JSON array for list field
+    // Payment Terms metafield - format as JSON array for list type
+    // This will be used when creating orders for this location
     if (locationData.terms && locationData.terms.trim() !== '') {
       metafields.push({
         namespace: 'custom',
@@ -1310,16 +1318,16 @@ class ShopifyService {
       });
     }
     
-    // Currency Code metafield - JSON array for list field
+    // Currency Code metafield - format as JSON array for list type
     if (locationData.currencyCode && locationData.currencyCode.trim() !== '') {
       metafields.push({
         namespace: 'custom',
         key: 'location_currency_code',
-        value: JSON.stringify([locationData.currencyCode.trim().toUpperCase()])
+        value: JSON.stringify([locationData.currencyCode.trim()])
       });
     }
     
-    // Sales Rep metafield - JSON array for list field
+    // Sales Rep metafield - format as JSON array for list type
     if (locationData.salesRep && locationData.salesRep.trim() !== '') {
       metafields.push({
         namespace: 'custom',
@@ -1329,6 +1337,101 @@ class ShopifyService {
     }
     
     return metafields;
+  }
+
+  /**
+   * Helper method to prepare payment terms data for order creation
+   * This method extracts payment terms from company/location metafields
+   * and formats them for use with Shopify's native payment terms API
+   * @param {Object} companyData - Company data with payment terms
+   * @param {Object} locationData - Location data with payment terms (optional)
+   * @returns {Object|null} Payment terms data ready for order creation, or null if no terms
+   */
+  preparePaymentTermsForOrder(companyData, locationData = null) {
+    // Priority: Location payment terms > Company payment terms
+    let paymentTerms = null;
+    
+    if (locationData && locationData.terms && locationData.terms.trim() !== '') {
+      paymentTerms = locationData.terms.trim();
+    } else if (companyData && companyData.terms && companyData.terms.trim() !== '') {
+      paymentTerms = companyData.terms.trim();
+    }
+    
+    if (!paymentTerms) {
+      return null;
+    }
+    
+    // Map payment terms text to Shopify payment terms template names
+    // This mapping should be customized based on your payment terms templates in Shopify
+    const paymentTermsMapping = {
+      'Net 30': 'Net 30',
+      'Net 15': 'Net 15', 
+      'Net 60': 'Net 60',
+      'COD': 'Cash on Delivery',
+      'Prepaid': 'Payment in advance'
+    };
+    
+    const mappedTerms = paymentTermsMapping[paymentTerms] || paymentTerms;
+    
+    return {
+      paymentTermsName: mappedTerms,
+      // You may need to adjust this based on your payment terms templates
+      // Common types: RECEIPT, NET, FIXED_DATE
+      paymentTermsType: 'NET'
+    };
+  }
+
+  /**
+   * Create payment terms for an order (to be used when creating orders)
+   * This method should be called after creating an order to apply payment terms
+   * @param {string} orderId - The Shopify order ID
+   * @param {Object} paymentTermsData - Payment terms data from preparePaymentTermsForOrder
+   * @returns {Promise<Object>} Created payment terms object
+   */
+  async createOrderPaymentTerms(orderId, paymentTermsData) {
+    if (!paymentTermsData) {
+      console.log('📝 No payment terms to apply to order');
+      return null;
+    }
+
+    const mutation = `
+      mutation paymentTermsCreate($referenceId: ID!, $paymentTermsAttributes: PaymentTermsCreateInput!) {
+        paymentTermsCreate(referenceId: $referenceId, paymentTermsAttributes: $paymentTermsAttributes) {
+          paymentTerms {
+            id
+            paymentTermsName
+            paymentTermsType
+            dueInDays
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `;
+
+    try {
+      console.log(`📝 Creating payment terms for order: ${paymentTermsData.paymentTermsName}`);
+      
+      const data = await this.executeQuery(mutation, { 
+        referenceId: orderId,
+        paymentTermsAttributes: paymentTermsData
+      });
+      
+      if (data.paymentTermsCreate.userErrors?.length > 0) {
+        throw new Error(`Payment terms creation errors: ${JSON.stringify(data.paymentTermsCreate.userErrors)}`);
+      }
+
+      const paymentTerms = data.paymentTermsCreate.paymentTerms;
+      console.log(`✅ Successfully created payment terms: ${paymentTerms.paymentTermsName}`);
+      
+      return paymentTerms;
+    } catch (error) {
+      console.error('❌ Error creating payment terms for order:', error);
+      // Don't throw error - payment terms creation failure shouldn't break the sync
+      return null;
+    }
   }
 }
 
