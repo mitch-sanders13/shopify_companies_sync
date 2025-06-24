@@ -307,21 +307,38 @@ class ShopifyService {
       return;
     }
 
+    // Parse tax details to determine if location should be tax exempt
+    const taxDetailsText = locationData.taxDetails.trim().toLowerCase();
+    
+    // Determine if this location should be tax exempt based on descriptive text
+    const isTaxExempt = taxDetailsText.includes('exempt') || 
+                        taxDetailsText.includes('tax exempt') ||
+                        taxDetailsText === 'exempt';
+    
+    // Check if taxDetails contains an actual tax registration ID (numbers/alphanumeric)
+    // Tax registration IDs typically contain numbers and are longer than simple descriptive text
+    const looksLikeTaxId = /^[A-Z0-9\-]{6,}$/i.test(locationData.taxDetails.trim()) &&
+                           !taxDetailsText.includes('exempt') &&
+                           !taxDetailsText.includes('standard') &&
+                           !taxDetailsText.includes('tax');
+
     const mutation = `
       mutation companyLocationTaxSettingsUpdate(
         $companyLocationId: ID!,
+        $taxExempt: Boolean,
         $taxRegistrationId: String
       ) {
         companyLocationTaxSettingsUpdate(
           companyLocationId: $companyLocationId,
+          taxExempt: $taxExempt,
           taxRegistrationId: $taxRegistrationId
         ) {
           companyLocation {
             id
             name
             taxSettings {
-              taxRegistrationId
               taxExempt
+              taxRegistrationId
             }
           }
           userErrors {
@@ -333,12 +350,24 @@ class ShopifyService {
     `;
 
     try {
-      console.log(`🏛️  Updating tax settings for location with tax ID: ${locationData.taxDetails.trim()}`);
+      console.log(`🏛️  Updating tax settings for location:`);
+      console.log(`   - Tax Details Text: "${locationData.taxDetails}"`);
+      console.log(`   - Setting Tax Exempt: ${isTaxExempt}`);
+      if (looksLikeTaxId) {
+        console.log(`   - Setting Tax Registration ID: ${locationData.taxDetails.trim()}`);
+      }
       
-      const data = await this.executeQuery(mutation, {
+      const variables = {
         companyLocationId: locationId,
-        taxRegistrationId: locationData.taxDetails.trim()
-      });
+        taxExempt: isTaxExempt
+      };
+
+      // Only include taxRegistrationId if it looks like an actual tax ID
+      if (looksLikeTaxId) {
+        variables.taxRegistrationId = locationData.taxDetails.trim();
+      }
+
+      const data = await this.executeQuery(mutation, variables);
       
       if (data.companyLocationTaxSettingsUpdate.userErrors?.length > 0) {
         console.error('❌ Tax settings update errors:', data.companyLocationTaxSettingsUpdate.userErrors);
@@ -347,8 +376,8 @@ class ShopifyService {
 
       console.log('✅ Tax settings updated successfully');
       const taxSettings = data.companyLocationTaxSettingsUpdate.companyLocation.taxSettings;
-      console.log(`   - Tax Registration ID: ${taxSettings.taxRegistrationId}`);
       console.log(`   - Tax Exempt: ${taxSettings.taxExempt}`);
+      console.log(`   - Tax Registration ID: ${taxSettings.taxRegistrationId || 'None'}`);
       
     } catch (error) {
       console.error('❌ Error updating tax settings:', error);
@@ -1001,196 +1030,6 @@ class ShopifyService {
   }
 
   /**
-   * Get or create a company contact role for location assignment
-   * @param {string} companyId - The company ID
-   * @param {string} roleName - The role name (defaults to 'Location Member')
-   * @returns {Promise<Object>} Company contact role object
-   */
-  async getOrCreateCompanyContactRole(companyId, roleName = 'Location Member') {
-    // First, try to find an existing role
-    const findRoleQuery = `
-      query findCompanyContactRoles($companyId: ID!) {
-        company(id: $companyId) {
-          contactRoles(first: 10) {
-            edges {
-              node {
-                id
-                name
-              }
-            }
-          }
-        }
-      }
-    `;
-
-    try {
-      const data = await this.executeQuery(findRoleQuery, { companyId });
-      
-      if (data.company && data.company.contactRoles.edges.length > 0) {
-        // Use the first available role or find one matching our role name
-        const existingRole = data.company.contactRoles.edges.find(edge => 
-          edge.node.name.toLowerCase().includes('member') || 
-          edge.node.name.toLowerCase().includes('location')
-        );
-        
-        if (existingRole) {
-          console.log(`🎭 Using existing company contact role: ${existingRole.node.name}`);
-          return existingRole.node;
-        } else {
-          // Use the first available role if no matching role found
-          console.log(`🎭 Using first available company contact role: ${data.company.contactRoles.edges[0].node.name}`);
-          return data.company.contactRoles.edges[0].node;
-        }
-      }
-
-      // If no roles exist, create a new one
-      console.log(`🎭 Creating new company contact role: ${roleName}`);
-      return await this.createCompanyContactRole(companyId, roleName);
-      
-    } catch (error) {
-      console.error('❌ Error finding company contact role:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Create a new company contact role
-   * @param {string} companyId - The company ID
-   * @param {string} roleName - The role name
-   * @returns {Promise<Object>} Created company contact role
-   */
-  async createCompanyContactRole(companyId, roleName) {
-    const mutation = `
-      mutation companyContactRoleCreate($companyId: ID!, $input: CompanyContactRoleInput!) {
-        companyContactRoleCreate(companyId: $companyId, input: $input) {
-          companyContactRole {
-            id
-            name
-          }
-          userErrors {
-            field
-            message
-          }
-        }
-      }
-    `;
-
-    const input = {
-      name: roleName,
-      note: `Created via sync for location assignments\nSync Date: ${new Date().toISOString()}`
-    };
-
-    try {
-      const data = await this.executeQuery(mutation, { companyId, input });
-      
-      if (data.companyContactRoleCreate.userErrors?.length > 0) {
-        throw new Error(`Role creation errors: ${JSON.stringify(data.companyContactRoleCreate.userErrors)}`);
-      }
-
-      console.log(`✅ Company contact role created: ${roleName}`);
-      return data.companyContactRoleCreate.companyContactRole;
-    } catch (error) {
-      console.error('❌ Error creating company contact role:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Assign a company contact to a specific location with a role
-   * @param {string} companyContactId - The company contact ID
-   * @param {string} locationId - The location ID to assign to
-   * @param {string} roleName - The role name for the assignment
-   * @returns {Promise<Object>} Assignment result
-   */
-  async assignCustomerToLocation(companyContactId, locationId, roleName = 'MEMBER') {
-    try {
-      // First, get the company ID from the contact to find/create a role
-      const getContactQuery = `
-        query getCompanyContact($companyContactId: ID!) {
-          companyContact(id: $companyContactId) {
-            company {
-              id
-            }
-          }
-        }
-      `;
-
-      const contactData = await this.executeQuery(getContactQuery, { companyContactId });
-      
-      if (!contactData.companyContact?.company?.id) {
-        throw new Error('Could not find company for the contact');
-      }
-
-      const companyId = contactData.companyContact.company.id;
-
-      // Get or create a company contact role
-      const contactRole = await this.getOrCreateCompanyContactRole(companyId, 'Location Member');
-
-      // Now create the role assignment using the correct mutation
-      const assignmentMutation = `
-        mutation companyContactAssignRole($companyContactId: ID!, $companyContactRoleId: ID!, $companyLocationId: ID!) {
-          companyContactAssignRole(
-            companyContactId: $companyContactId, 
-            companyContactRoleId: $companyContactRoleId, 
-            companyLocationId: $companyLocationId
-          ) {
-            companyContactRoleAssignment {
-              id
-              companyLocation {
-                id
-                name
-              }
-              role {
-                id
-                name
-              }
-            }
-            userErrors {
-              field
-              message
-            }
-          }
-        }
-      `;
-
-      console.log(`🔗 Assigning customer to location with role: ${contactRole.name}`);
-      
-      const assignmentData = await this.executeQuery(assignmentMutation, { 
-        companyContactId, 
-        companyContactRoleId: contactRole.id,
-        companyLocationId: locationId
-      });
-      
-      if (assignmentData.companyContactAssignRole.userErrors?.length > 0) {
-        const errors = assignmentData.companyContactAssignRole.userErrors;
-        
-        // Check if the error is about existing assignment
-        const duplicateError = errors.find(error => 
-          error.message.toLowerCase().includes('already exists') ||
-          error.message.toLowerCase().includes('duplicate') ||
-          error.message.toLowerCase().includes('already assigned')
-        );
-        
-        if (duplicateError) {
-          console.log(`ℹ️  Customer is already assigned to this location: ${duplicateError.message}`);
-          return null;
-        } else {
-          throw new Error(`Role assignment errors: ${JSON.stringify(errors)}`);
-        }
-      }
-
-      const assignment = assignmentData.companyContactAssignRole.companyContactRoleAssignment;
-      console.log(`✅ Customer successfully assigned to location: ${assignment.companyLocation.name}`);
-      
-      return assignment;
-      
-    } catch (error) {
-      console.error('❌ Error assigning customer to location:', error);
-      throw error;
-    }
-  }
-
-  /**
    * Get or create a company based on Company ID
    * @param {Object} data - Row data from spreadsheet
    * @returns {Promise<Object>} Company object
@@ -1277,14 +1116,55 @@ class ShopifyService {
     let location = await this.findLocationByExternalId(companyId, data.locationId);
     
     if (!location) {
-      // Check if this is the first location and if there's a default location we can update
+      // Check if there's a default location we can update instead of creating a new one
       const defaultLocation = await this.findDefaultCompanyLocation(companyId);
       
-      if (defaultLocation && data.locationId === '1') {
-        console.log(`📍 Found default company location, updating it with location data...`);
-        location = await this.updateCompanyLocation(defaultLocation.id, data);
+      // Update the default location if:
+      // 1. A default location exists (no external ID)
+      // 2. AND we don't already have any other locations with external IDs
+      // 3. AND this looks like it should be the primary location
+      if (defaultLocation) {
+        // Check if there are any other locations with external IDs already
+        const existingLocationsQuery = `
+          query checkExistingLocations($companyId: ID!) {
+            company(id: $companyId) {
+              locations(first: 10) {
+                edges {
+                  node {
+                    id
+                    externalId
+                  }
+                }
+              }
+            }
+          }
+        `;
+        
+        try {
+          const existingData = await this.executeQuery(existingLocationsQuery, { companyId });
+          const locationsWithExternalIds = existingData.company?.locations.edges.filter(
+            edge => edge.node.externalId && edge.node.externalId.trim() !== ''
+          ) || [];
+          
+          // If no locations have external IDs yet, update the default location
+          // This handles the case where Shopify auto-creates a blank default location
+          if (locationsWithExternalIds.length === 0) {
+            console.log(`📍 Found default company location with no external ID, updating it with location data...`);
+            console.log(`   - Default Location ID: ${defaultLocation.id}`);
+            console.log(`   - Will set External ID to: ${data.locationId}`);
+            location = await this.updateCompanyLocation(defaultLocation.id, data);
+          } else {
+            // Create new location if default location is already used/updated
+            console.log(`📍 Default location already has external ID or other locations exist, creating new location...`);
+            location = await this.createCompanyLocation(companyId, data);
+          }
+        } catch (error) {
+          console.error('❌ Error checking existing locations, creating new location instead:', error);
+          location = await this.createCompanyLocation(companyId, data);
+        }
       } else {
-        // Create new location if not found
+        // No default location found, create new location
+        console.log(`📍 No default location found, creating new location...`);
         location = await this.createCompanyLocation(companyId, data);
       }
     } else {
@@ -1627,6 +1507,196 @@ class ShopifyService {
       console.error('❌ Error creating payment terms for order:', error);
       // Don't throw error - payment terms creation failure shouldn't break the sync
       return null;
+    }
+  }
+
+  /**
+   * Get or create a company contact role for location assignment
+   * @param {string} companyId - The company ID
+   * @param {string} roleName - The role name (defaults to 'Location Member')
+   * @returns {Promise<Object>} Company contact role object
+   */
+  async getOrCreateCompanyContactRole(companyId, roleName = 'Location Member') {
+    // First, try to find an existing role
+    const findRoleQuery = `
+      query findCompanyContactRoles($companyId: ID!) {
+        company(id: $companyId) {
+          contactRoles(first: 10) {
+            edges {
+              node {
+                id
+                name
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    try {
+      const data = await this.executeQuery(findRoleQuery, { companyId });
+      
+      if (data.company && data.company.contactRoles.edges.length > 0) {
+        // Use the first available role or find one matching our role name
+        const existingRole = data.company.contactRoles.edges.find(edge => 
+          edge.node.name.toLowerCase().includes('member') || 
+          edge.node.name.toLowerCase().includes('location')
+        );
+        
+        if (existingRole) {
+          console.log(`🎭 Using existing company contact role: ${existingRole.node.name}`);
+          return existingRole.node;
+        } else {
+          // Use the first available role if no matching role found
+          console.log(`🎭 Using first available company contact role: ${data.company.contactRoles.edges[0].node.name}`);
+          return data.company.contactRoles.edges[0].node;
+        }
+      }
+
+      // If no roles exist, create a new one
+      console.log(`🎭 Creating new company contact role: ${roleName}`);
+      return await this.createCompanyContactRole(companyId, roleName);
+      
+    } catch (error) {
+      console.error('❌ Error finding company contact role:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Create a new company contact role
+   * @param {string} companyId - The company ID
+   * @param {string} roleName - The role name
+   * @returns {Promise<Object>} Created company contact role
+   */
+  async createCompanyContactRole(companyId, roleName) {
+    const mutation = `
+      mutation companyContactRoleCreate($companyId: ID!, $input: CompanyContactRoleInput!) {
+        companyContactRoleCreate(companyId: $companyId, input: $input) {
+          companyContactRole {
+            id
+            name
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `;
+
+    const input = {
+      name: roleName,
+      note: `Created via sync for location assignments\nSync Date: ${new Date().toISOString()}`
+    };
+
+    try {
+      const data = await this.executeQuery(mutation, { companyId, input });
+      
+      if (data.companyContactRoleCreate.userErrors?.length > 0) {
+        throw new Error(`Role creation errors: ${JSON.stringify(data.companyContactRoleCreate.userErrors)}`);
+      }
+
+      console.log(`✅ Company contact role created: ${roleName}`);
+      return data.companyContactRoleCreate.companyContactRole;
+    } catch (error) {
+      console.error('❌ Error creating company contact role:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Assign a company contact to a specific location with a role
+   * @param {string} companyContactId - The company contact ID
+   * @param {string} locationId - The location ID to assign to
+   * @param {string} roleName - The role name for the assignment
+   * @returns {Promise<Object>} Assignment result
+   */
+  async assignCustomerToLocation(companyContactId, locationId, roleName = 'MEMBER') {
+    try {
+      // First, get the company ID from the contact to find/create a role
+      const getContactQuery = `
+        query getCompanyContact($companyContactId: ID!) {
+          companyContact(id: $companyContactId) {
+            company {
+              id
+            }
+          }
+        }
+      `;
+
+      const contactData = await this.executeQuery(getContactQuery, { companyContactId });
+      
+      if (!contactData.companyContact?.company?.id) {
+        throw new Error('Could not find company for the contact');
+      }
+
+      const companyId = contactData.companyContact.company.id;
+
+      // Get or create a company contact role
+      const contactRole = await this.getOrCreateCompanyContactRole(companyId, 'Location Member');
+
+      // Now create the role assignment using the correct mutation
+      const assignmentMutation = `
+        mutation companyContactAssignRole($companyContactId: ID!, $companyContactRoleId: ID!, $companyLocationId: ID!) {
+          companyContactAssignRole(
+            companyContactId: $companyContactId, 
+            companyContactRoleId: $companyContactRoleId, 
+            companyLocationId: $companyLocationId
+          ) {
+            companyContactRoleAssignment {
+              id
+              companyLocation {
+                id
+                name
+              }
+              role {
+                id
+                name
+              }
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+      `;
+
+      console.log(`🔗 Assigning customer to location with role: ${contactRole.name}`);
+      
+      const assignmentData = await this.executeQuery(assignmentMutation, { 
+        companyContactId, 
+        companyContactRoleId: contactRole.id,
+        companyLocationId: locationId
+      });
+      
+      if (assignmentData.companyContactAssignRole.userErrors?.length > 0) {
+        const errors = assignmentData.companyContactAssignRole.userErrors;
+        
+        // Check if the error is about existing assignment
+        const duplicateError = errors.find(error => 
+          error.message.toLowerCase().includes('already exists') ||
+          error.message.toLowerCase().includes('duplicate') ||
+          error.message.toLowerCase().includes('already assigned')
+        );
+        
+        if (duplicateError) {
+          console.log(`ℹ️  Customer is already assigned to this location: ${duplicateError.message}`);
+          return null;
+        } else {
+          throw new Error(`Role assignment errors: ${JSON.stringify(errors)}`);
+        }
+      }
+
+      const assignment = assignmentData.companyContactAssignRole.companyContactRoleAssignment;
+      console.log(`✅ Customer successfully assigned to location: ${assignment.companyLocation.name}`);
+      
+      return assignment;
+      
+    } catch (error) {
+      console.error('❌ Error assigning customer to location:', error);
+      throw error;
     }
   }
 }
