@@ -4,11 +4,12 @@
  * This service handles authentication with Google Sheets API using a service account
  * and reads structured company and customer data from a specified spreadsheet.
  * 
- * Expected Sheet Structure (24 columns):
+ * Expected Sheet Structure (25 columns):
  * A: Company ID | B: Company Name | C: Location ID | D: Attention | E: Address | F: Address 2 | G: City | 
  * H: State | I: Zip | J: Country | K: Customer Email | L: Customer First Name | M: Customer Last Name | 
  * N: Customer Role | O: Price Level | P: Terms | Q: Currency Code | R: Sales Rep | S: Tax Details |
- * T: CC Hold | U: AR Red Flag | V: Email of Primary Contact | W: Email of Billing Contact | X: Email of Billing Contact 2
+ * T: CC Hold | U: AR Red Flag | V: Email of Primary Contact | W: Email of Billing Contact | X: Email of Billing Contact 2 |
+ * Y: Location Name
  */
 
 const { google } = require('googleapis');
@@ -70,10 +71,10 @@ class SheetsService {
 
       console.log(`📊 Reading data from Google Sheet: ${spreadsheetId}`);
 
-      // Read all data from the sheet - expanded to include all 24 columns (A-X)
+      // Read all data from the sheet - expanded to include all 25 columns (A-Y)
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId,
-        range: `${sheetName}!A2:X`,
+        range: `${sheetName}!A2:Y`,
       });
 
       const rows = response.data.values || [];
@@ -130,7 +131,7 @@ class SheetsService {
           return;
         }
 
-        // Map all 24 columns to variables
+        // Map all 25 columns to variables
         const [
           companyId,           // A
           companyName,         // B  
@@ -155,7 +156,8 @@ class SheetsService {
           arRedFlag,           // U
           emailPrimaryContact, // V
           emailBillingContact, // W
-          emailBillingContact2 // X
+          emailBillingContact2,// X
+          locationName         // Y
         ] = row;
 
         // Enhanced validation for required fields
@@ -252,6 +254,9 @@ class SheetsService {
           currencyCode: currencyCode?.trim().toUpperCase() || 'USD', // Default to USD
           salesRep: salesRep?.trim() || '',
           taxDetails: taxDetails?.trim() || '',
+          
+          // Location information
+          locationName: locationName?.trim() || '',
           
           // Company metafields (boolean and email)
           ccHold: ccHold?.trim().toLowerCase() === 'true' || false,

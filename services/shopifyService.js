@@ -802,7 +802,7 @@ class ShopifyService {
       `;
 
       const updateInput = {
-        name: `${locationData.companyName} - ${locationData.address}`,
+        name: `${locationData.attention}`,
         externalId: locationData.locationId,
         note: `Updated via sync from Google Sheets\nLocation ID: ${locationData.locationId}\nAddress: ${locationData.address}, ${locationData.city}, ${locationData.state} ${locationData.zip}\nSync Date: ${new Date().toISOString()}`
       };
@@ -931,7 +931,7 @@ class ShopifyService {
     `;
 
     const input = {
-      name: `${locationData.companyName} - ${locationData.address}`,
+      name: `${locationData.attention}`,
       externalId: locationData.locationId,
       note: `Created via sync from Google Sheets\nLocation ID: ${locationData.locationId}\nSync Date: ${new Date().toISOString()}`,
       shippingAddress: {
