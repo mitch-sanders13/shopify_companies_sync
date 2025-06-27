@@ -96,7 +96,7 @@ class ShopifyService {
 
     const query = `
       query findCompany {
-        companies(first: 50) {
+        companies(first: 250) {
           edges {
             node {
               id
@@ -670,6 +670,68 @@ class ShopifyService {
   }
 
   /**
+   * Find a location globally by external ID (across all companies)
+   * @param {string} externalId - The external ID to search for
+   * @returns {Promise<Object|null>} Location object or null if not found
+   */
+  async findLocationGloballyByExternalId(externalId) {
+    // Use the Shopify Admin API search to find locations by external ID
+    // This searches across all company locations globally
+    const query = `
+      query findLocationGlobally($query: String!) {
+        companyLocations(first: 250, query: $query) {
+          edges {
+            node {
+              id
+              name
+              externalId
+              company {
+                id
+                name
+                externalId
+              }
+              shippingAddress {
+                recipient
+                address1
+                address2
+                city
+                province
+                zip
+                countryCode
+              }
+              createdAt
+              updatedAt
+            }
+          }
+        }
+      }
+    `;
+
+    try {
+      console.log(`🔍 Searching globally for location with external ID: "${externalId}"`);
+      
+      const data = await this.executeQuery(query, {
+        query: `external_id:${externalId}`
+      });
+
+      const locations = data.companyLocations.edges;
+      
+      if (locations.length > 0) {
+        const location = locations[0].node;
+        console.log(`✅ Found existing location globally: "${location.name}" under company "${location.company.name}" (Company ID: ${location.company.externalId})`);
+        return location;
+      } else {
+        console.log(`📭 No location found globally with external ID: "${externalId}"`);
+        return null;
+      }
+    } catch (error) {
+      console.error('❌ Error finding location globally:', error);
+      // Fall back to null if global search fails
+      return null;
+    }
+  }
+
+  /**
    * Find a company location by external ID (Location ID from spreadsheet)
    * @param {string} companyId - The Shopify company ID
    * @param {string} externalId - The external ID to search for
@@ -679,7 +741,7 @@ class ShopifyService {
     const query = `
       query findLocation($companyId: ID!) {
         company(id: $companyId) {
-          locations(first: 50) {
+          locations(first: 250) {
             edges {
               node {
                 id
@@ -704,14 +766,41 @@ class ShopifyService {
     `;
 
     try {
+      console.log(`🔍 Searching for location with external ID: "${externalId}" (type: ${typeof externalId})`);
+      
       const data = await this.executeQuery(query, { companyId });
       
       if (!data.company) {
+        console.log(`⚠️  Company not found: ${companyId}`);
         return null;
       }
 
       const locations = data.company.locations.edges;
-      const location = locations.find(edge => edge.node.externalId === externalId);
+      console.log(`📍 Found ${locations.length} locations in company to search through:`);
+      
+      // Debug: Log all existing locations and their external IDs
+      locations.forEach((edge, index) => {
+        const loc = edge.node;
+        console.log(`   ${index + 1}. "${loc.name}" - External ID: "${loc.externalId}" (type: ${typeof loc.externalId})`);
+      });
+      
+      // Convert both values to strings and trim for robust comparison
+      const searchId = String(externalId).trim();
+      console.log(`🔍 Searching for: "${searchId}"`);
+      
+      const location = locations.find(edge => {
+        const locationExternalId = String(edge.node.externalId || '').trim();
+        const match = locationExternalId === searchId;
+        if (match) {
+          console.log(`✅ Found matching location: "${edge.node.name}" (External ID: "${locationExternalId}")`);
+        }
+        return match;
+      });
+      
+      if (!location) {
+        console.log(`📭 No location found with external ID: "${searchId}"`);
+      }
+      
       return location ? location.node : null;
     } catch (error) {
       console.error('❌ Error finding location:', error);
@@ -728,7 +817,7 @@ class ShopifyService {
     const query = `
       query findDefaultLocation($companyId: ID!) {
         company(id: $companyId) {
-          locations(first: 50) {
+          locations(first: 250) {
             edges {
               node {
                 id
@@ -980,9 +1069,9 @@ class ShopifyService {
    */
   async isCustomerAssignedToLocation(companyContactId, locationId) {
     const query = `
-      query checkLocationAssignment($companyContactId: ID!) {
-        companyContact(id: $companyContactId) {
-          roleAssignments(first: 50) {
+              query checkLocationAssignment($companyContactId: ID!) {
+          companyContact(id: $companyContactId) {
+            roleAssignments(first: 250) {
             edges {
               node {
                 id
@@ -1112,28 +1201,44 @@ class ShopifyService {
    * @returns {Promise<Object>} Location object
    */
   async getOrCreateLocation(companyId, data) {
-    // First try to find existing location by external ID
+    // First try to find existing location by external ID within this company
     let location = await this.findLocationByExternalId(companyId, data.locationId);
     
     if (location) {
-      // Found existing location, update it
+      // Found existing location in this company, update it
       console.log(`📍 Found existing location: ${location.name} (ID: ${location.externalId})`);
       console.log(`🔄 Updating location metadata for latest changes...`);
       location = await this.updateCompanyLocation(location.id, data);
     } else {
-      // No existing location found, check for default location to update
-      const defaultLocation = await this.findDefaultCompanyLocation(companyId);
+      // Not found in this company, check globally
+      console.log(`📭 Location not found in this company, checking globally...`);
+      const globalLocation = await this.findLocationGloballyByExternalId(data.locationId);
       
-      if (defaultLocation) {
-        // Update the default location with our data
-        console.log(`📍 Found default company location with no external ID, updating it with location data...`);
-        console.log(`   - Default Location ID: ${defaultLocation.id}`);
-        console.log(`   - Will set External ID to: ${data.locationId}`);
-        location = await this.updateCompanyLocation(defaultLocation.id, data);
+      if (globalLocation) {
+        // Location exists under a different company
+        console.log(`⚠️  CONFLICT: Location ${data.locationId} exists under company "${globalLocation.company.name}" (${globalLocation.company.externalId})`);
+        console.log(`   Expected company: Barnes & Noble College (5260458)`);
+        console.log(`   Actual company: ${globalLocation.company.name} (${globalLocation.company.externalId})`);
+        console.log(`🚫 Skipping this location to avoid conflicts. Manual intervention may be required.`);
+        
+        // Return the existing location but don't try to modify it
+        // This prevents the sync from crashing
+        return globalLocation;
       } else {
-        // No default location, create new one
-        console.log(`📍 No default location found, creating new location...`);
-        location = await this.createCompanyLocation(companyId, data);
+        // Check for default location to update
+        const defaultLocation = await this.findDefaultCompanyLocation(companyId);
+        
+        if (defaultLocation) {
+          // Update the default location with our data
+          console.log(`📍 Found default company location with no external ID, updating it with location data...`);
+          console.log(`   - Default Location ID: ${defaultLocation.id}`);
+          console.log(`   - Will set External ID to: ${data.locationId}`);
+          location = await this.updateCompanyLocation(defaultLocation.id, data);
+        } else {
+          // No default location, create new one
+          console.log(`📍 No default location found, creating new location...`);
+          location = await this.createCompanyLocation(companyId, data);
+        }
       }
     }
     
@@ -1170,7 +1275,7 @@ class ShopifyService {
         company(id: $companyId) {
           name
           externalId
-          locations(first: 50) {
+          locations(first: 250) {
             edges {
               node {
                 id
@@ -1481,9 +1586,9 @@ class ShopifyService {
   async getOrCreateCompanyContactRole(companyId, roleName = 'Location Member') {
     // First, try to find an existing role
     const findRoleQuery = `
-      query findCompanyContactRoles($companyId: ID!) {
-        company(id: $companyId) {
-          contactRoles(first: 10) {
+              query findCompanyContactRoles($companyId: ID!) {
+          company(id: $companyId) {
+            contactRoles(first: 50) {
             edges {
               node {
                 id
@@ -1661,6 +1766,7 @@ class ShopifyService {
       throw error;
     }
   }
+
 }
 
 module.exports = ShopifyService; 
